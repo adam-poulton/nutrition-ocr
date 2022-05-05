@@ -37,12 +37,13 @@ KeyError: "'There'. closest match: 'hello' with ratio 0.400"
 __revision__ = "$Rev$"
 
 import difflib
+import re
 
 
 class FuzzyDict(dict):
     "Provides a dictionary that performs fuzzy lookup"
 
-    def __init__(self, items=None, cutoff=.6):
+    def __init__(self, items=None, cutoff=None):
         """Construct a new FuzzyDict instance
 
         items is an dictionary to copy items from (optional)
@@ -53,7 +54,11 @@ class FuzzyDict(dict):
 
         if items:
             self.update(items)
-        self.cutoff = cutoff
+
+        if cutoff:
+            self.cutoff = cutoff
+        else:
+            self.cutoff = 0.6  # default value
 
         # short wrapper around some super (dict) methods
         self._dict_contains = lambda key: \
@@ -61,6 +66,15 @@ class FuzzyDict(dict):
 
         self._dict_getitem = lambda key: \
             super(FuzzyDict, self).__getitem__(key)
+
+    @classmethod
+    def fromfile(cls, file, cutoff=None):
+        val = FuzzyDict(cutoff=cutoff)
+        with open(file) as f:
+            for line in f:
+                item = line.strip()
+                val[item] = item
+        return val
 
     def _search(self, lookfor, stop_on_first=False):
         """Returns the value whose key best matches lookfor
@@ -133,3 +147,11 @@ class FuzzyDict(dict):
 
         return item
 
+    def get_label_and_value(self, label):
+        if label in self:
+            label_name = self[label]
+        else:
+            label_name = self[re.split('[/|I]', label)[0]]
+
+        digit_pat = "[-+]?\d*[\.\,\']?\d+"
+        values = re.findall("{0}g|{0}%|{0}J|{0}kJ|{0}mg|{0}kcal|{0}".format(digit_pat), label)
