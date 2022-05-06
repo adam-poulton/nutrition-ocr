@@ -1,9 +1,10 @@
 import argparse
 import time
-import cv2
+import cv2 as cv
 import os
 import numpy as np
 import re
+import requests
 
 from lib.fast_rcnn.test import get_blobs
 from lib.fast_rcnn.config import cfg, cfg_from_file
@@ -12,33 +13,45 @@ from lib.text_connector.detectors import TextDetector
 
 import process_image
 
-from fuzzydict import FuzzyDict
+from nutrition_map import NutritionLabelMap
 from table_detector import NutritionTableDetector
 from text_detector import NutritionTextDetector
 
+
+class Table:
+    """
+    represents a collection of data cell rows
+    """
+    def __init__(self):
+        self.data = {}
+
+
+class Row:
+    """
+    Represents a row of data cells
+    """
+    def __init__(self, label):
+        self.label = label
+        self.data = []
+
+    def add_cell(self, cell):
+        self.data.append(cell)
+
+    def as_json(self):
+        return {self.label: {'value:' }}
+
+
 class Cell:
-    def __init__(self, bbox, text, is_label=False, parent=None, children=None):
-        assert len(bbox) == 4
+    def __init__(self, bbox, text):
+        if len(bbox) != 4:
+            raise ValueError("class 'Cell' expected 4 elements in parameter: 'bbox'")
         self.bbox = bbox
-        self.text = text
-        self.is_label = is_label
-        self.parent = parent
-        if children:
-            self.children = children
-        else:
-            self.children = []
+        self.text = _clean_string(text.strip())
+        self.label = False
+        self.processed = False
 
-    def __iter__(self):
-        self.i = 0
-        return self
-
-    def __next__(self):
-        if self.i < len(self.children):
-            current = self.children[self.i]
-            self.i += 1
-            return current
-        else:
-            raise StopIteration
+    def __repr__(self):
+        return f'cell: {self.bbox}\t "{self.text}"'
 
     @property
     def x1(self):
@@ -63,7 +76,7 @@ class Cell:
         return x, y
 
     @property
-    def cell_type(self):
+    def text_type(self):
         """
         :return: An integer corresponding to string type:
             0 - name and value
@@ -81,20 +94,21 @@ class Cell:
                 # text does not contain 3 consecutive non-digits
                 # assume text is a value with units i.e '120mg'
                 return 1
-        # text contains no digits
-        # assume text is a pure label i.e 'energy'
-        return 2
+        else:
+            # text contains no digits
+            # assume text is a pure label i.e 'energy'
+            return 2
 
-    def aligned_row(self, other):
+    def is_same_row(self, other):
         if type(other) is type(self):
             _, y = self.center
             return other.y1 < y < other.y2
         raise ValueError(f'Excepted type: {type(self)}. Given type: {type(other)}')
 
-    def aligned_col(self, other):
+    def is_same_col(self, other):
         if type(other) is type(self):
             x, _ = self.center
-            return other.x1 < x <other.x2
+            return other.x1 < x < other.x2
         raise ValueError(f'Excepted type: {type(self)}. Given type: {type(other)}')
 
 
@@ -106,9 +120,9 @@ def separate_unit(string):
     r2 = re.compile("(\d+[\.\,\']?\d*)")
     m2 = r2.match(string)
     if m1:
-        return float(m1.group(1).replace(',', '.').replace("'", '.')), m1.group(2)
+        return float(m1.group(1).replace(',', '').replace("'", '')), m1.group(2).replace('q', 'g')
     elif m2:
-        return float(m2.group(1).replace(',', '.').replace("'", '.'))
+        return float(m2.group(1).replace(',', '').replace("'", ''))
     else:
         return ""
 
@@ -123,14 +137,66 @@ class DetectionPipeline:
         nutrient_path = os.path.join(basedir, 'data', 'nutrition-labels.txt')
         self.nutrient_path = nutrient_path
 
-    def detect(self, img_path, debug=False):
+    def detect(self, img_path):
         """
         :param img_path: path to an image
         :param debug: debug flag
         :return: dictionary of nutritional OCR captures
         """
+        
+        image = cv.imread(img_path)
+        image = process_image.pre_process(image=image)
+        # Get the bounding boxes from the nutritional table model
+        dims = self._detect_table_box(image)
 
-        image = cv2.imread(img_path)
+        # crop the image to the given bounding box
+        # cropped_image should now only contain nutritional table
+        cropped_image = process_image.crop(image=image, dims=dims, save=True, save_loc="cropped.jpg")
+
+        # detect the text in the cropped image
+        text_blob_list = self._detect_text(cropped_image)
+
+        cells = []
+
+        for blob_cord in text_blob_list:
+            word_image = process_image.crop(image=cropped_image, dims=blob_cord, ext_ratio=0.005)
+            if word_image.shape[1] > 0 and word_image.shape[0] > 0:
+                text = process_image.ocr(word_image, 1, 7)
+                if text:
+                    cells.append(Cell(bbox=blob_cord, text=text))
+
+        print(*sorted(cells, key=lambda x: (x.y1, x.x1)), sep="\n")
+
+        for cell in cells:
+            cropped_image = cv.rectangle(cropped_image, (cell.x1, cell.y1), (cell.x2, cell.y2), (0, 255, 0), 1)
+        cv.imwrite(os.path.join('images', 'table-boxes.jpg'), cropped_image)
+        # Map all boxes according to their location and append the value string to the label
+
+        label_mapper = NutritionLabelMap()  # maps possible aliases of labels into their standard key
+        output = {}  # store nutritional labels and values
+
+        for cell in cells:
+            if cell.text in label_mapper:
+                # cell is a label
+                cx, cy = cell.center
+                # get the JSON key for this label
+                label = label_mapper[cell.text]
+                row = []
+                for target in cells:
+                    t_min = target.y1
+                    t_max = target.y2
+                    if _in_bounds(cy, t_min, t_max) and target.text_type != 2 and target.x1 > cell.x1:
+                        # label is on same row as the target value
+                        row.append(target)
+                if row:
+                    # get the cell on the far left (quantity per 100g)
+                    value_cell = sorted(row, key=lambda c: c.x2, reverse=True)[0]
+                    value, unit = separate_unit(value_cell.text)
+                    output.update({label: {'value': value, 'unit': unit}})
+
+        return output
+
+    def _detect_table_box(self, image):
         # Get the bounding boxes from the nutritional table model
         boxes, scores, classes, num = self.table_model.get_classification(image)
         # Get the dimensions of the image
@@ -143,59 +209,7 @@ class DetectionPipeline:
         ymax = boxes[0][0][2] * height
         xmax = boxes[0][0][3] * width
         # Package bounding box cords into tuple
-        dims = (xmin, ymin, xmax, ymax)
-
-        # crop the image to the given bounding box
-        # cropped_image should now only contain nutritional table
-        cropped_image = process_image.crop(image=image, dims=dims, save=True, save_loc=".data/result/output.jpg")
-
-        # detect the text in the cropped image
-        text_blob_list = self._detect_text(cropped_image)
-        text_location_list = []  # metadata of detected text boxes
-        nutrient_dict = {}  # store nutritional labels and values
-
-        for blob_cord in text_blob_list:
-            word_image = process_image.crop(image=cropped_image, dims=blob_cord, ext_ratio=0.005)
-            word_image = process_image.pre_process(word_image)
-            if word_image.shape[1] > 0 and word_image.shape[0] > 0:
-                text = process_image.ocr(word_image, 1, 7)
-                if text:
-                    center_x = (blob_cord[0] + blob_cord[2]) / 2
-                    center_y = (blob_cord[1] + blob_cord[3]) / 2
-                    box_center = (center_x, center_y)
-
-                    new_location = {
-                        'bbox': blob_cord,
-                        'text': text,
-                        'box_center': box_center,
-                        'string_type': _string_type(text)
-                    }
-                    text_location_list.append(new_location)
-
-        # Map all boxes according to their location and append the value string to the label
-        for location in text_location_list:
-            if location['string_type'] == 2:
-                # string is a label, find its matching value(s)
-                l_center = location['box_center'][1]
-                for target in text_location_list:
-                    t_min = target['bbox'][1]
-                    t_max = target['bbox'][3]
-                    if _in_bounds(l_center, t_min, t_max) and target['string_type'] == 1:
-                        # label is vertically aligned with the target value, combine strings
-                        location['text'] += f' {target["text"]}'
-                        location['string_type'] = 0  # flag this box as a combined label-value string
-
-        fuz_dict = FuzzyDict.fromfile(self.nutrient_path)
-
-        # add the labels to the fuzzy dictionary
-        for location in text_location_list:
-            if location['string_type'] == 0:
-                text = _clean_string(location['text'])
-
-                if text in fuz_dict or re.split('[/|I]', text)[0] in fuz_dict:
-                    label, value = None, None
-
-
+        return xmin, ymin, xmax, ymax
 
     def _detect_text(self, image):
         image, scale = process_image.resize(image=image)
@@ -250,10 +264,8 @@ def _in_bounds(target, t_min, t_max):
 
 
 def _clean_string(string: str):
-    pat = "[\|\*\_\'\—\-\{}]".format('"')
-    text = re.sub(pat, "", string)
-    text = re.sub(" I ", " / ", text)
-    text = re.sub("^I ", "", text)
+    bad_chars = r'[^a-zA-Z0-9 .,%\']'
+    text = re.sub(bad_chars, "", string)
     text = re.sub("Omg", "0mg", text)
     text = re.sub("Og", "0g", text)
     text = re.sub('(?<=\d) (?=\w)', '', text)
@@ -282,3 +294,17 @@ def _fix_suffix(string: str):
     return string
 
 
+def url_to_image(url: str):
+    resp = requests.get(url, stream=True).raw
+    image = np.asarray(bytearray(resp.read()), dtype="uint8")
+    return cv.imdecode(image, -1)
+
+
+if __name__ == '__main__':
+    pipeline = DetectionPipeline()
+    pipeline.detect(os.path.join(os.getcwd(), 'images', f'label_{1}.jpg'))
+    # for i in range(1, 9):
+    #     img = os.path.join(os.getcwd(), 'images', f'label_{i}.jpg')
+    #     image = cv.imread(img)
+    #     dims = pipeline._detect_table_box(image)
+    #     cropped = process_image.crop(image=image, dims=dims, save=True, save_loc=os.path.join('data', 'result', f'cropped_{i}.jpg'))

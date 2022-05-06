@@ -19,6 +19,10 @@ class MyTestCase(unittest.TestCase):
         result = separate_unit("250,1 g")
         self.assertEqual((250.1, 'g'), result)
 
+    def test_separate_unit_5(self):
+        result = separate_unit("5.6% 250,1 g")
+        self.assertEqual((250.1, 'g'), result)
+
 
 if __name__ == '__main__':
     unittest.main()

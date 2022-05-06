@@ -1,5 +1,4 @@
 import tensorflow.compat.v1 as tf
-from tensorflow.python.platform import gfile
 
 
 class NutritionTextDetector:
@@ -8,7 +7,7 @@ class NutritionTextDetector:
         with self.detection_graph.as_default():
             config = tf.ConfigProto(allow_soft_placement=True)
             self.sess = tf.Session(config=config)
-            with gfile.FastGFile('data/models/ctpn.pb', 'rb') as f:
+            with tf.gfile.GFile('data/models/ctpn.pb', 'rb') as f:
                 graph_def = tf.GraphDef()
                 graph_def.ParseFromString(f.read())
                 self.sess.graph.as_default()
