@@ -2,35 +2,37 @@ import os
 import csv
 import cv2 as cv
 import pytesseract
-from PIL import Image, ImageEnhance
+from PIL import Image
 import numpy as np
+import matplotlib as plt
+from scipy.ndimage import interpolation as inter
 
 from lib.text_connector.text_connect_cfg import Config as TextlineConfig
 
 
-def pre_process(image, enhance=1):
-    if enhance > 1 and False:
-        image = Image.fromarray(image)
-        contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(enhance)
-        image = np.asarray(image)
+def threshold(image):
 
     image = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
 
     image = cv.GaussianBlur(image, (5, 5), 0)
-    # image = cv.adaptiveThreshold(image, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2)
-    _, image = cv.threshold(image, 0, 255, cv.THRESH_BINARY+cv.THRESH_OTSU)
+
+    # _, image = cv.threshold(image, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
+
+    _, image = cv.threshold(image, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU)
+    image = cv.bitwise_not(image)
 
     image = cv.cvtColor(image, cv.COLOR_GRAY2BGR)
-
 
     return image
 
 
+def binary(image):
+    pass
+
+
 def ocr(image, oem=1, psm=3):
-    
+    # required for windows
     pytesseract.pytesseract.tesseract_cmd = os.path.join('C:\\', 'Program Files', 'Tesseract-OCR', 'tesseract.exe')
-    # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract'
     
     config = '--oem {oem} --psm {psm}'.format(oem=oem, psm=psm)
     
@@ -53,12 +55,10 @@ def crop(image, dims, ext_ratio=0, save=False, save_loc=None):
     nx = image.shape[1]
     ny = image.shape[0]
     
-    c_dims = (
-        max(0, int(dims[0] - ext_ratio * nx)),
-        max(0, int(dims[1] - ext_ratio * ny)),
-        min(nx, int(dims[2] + ext_ratio * nx)+2),
-        min(ny, int(dims[3] + ext_ratio * ny)+2)
-    )
+    c_dims = (max(0, int(dims[0] - ext_ratio * nx)),
+            max(0, int(dims[1] - ext_ratio * ny)),
+            min(nx, int(dims[2] + ext_ratio * nx)+2),
+            min(ny, int(dims[3] + ext_ratio * ny)+2))
     
     cropped_image = image[c_dims[1]:c_dims[3], c_dims[0]:c_dims[2]]
     
@@ -74,4 +74,7 @@ def resize(image, scale=TextlineConfig.SCALE, max_scale=TextlineConfig.MAX_SCALE
         f = float(max_scale) / max(image.shape[0], image.shape[1])
     return cv.resize(image, None, None, fx=f, fy=f, interpolation=cv.INTER_LINEAR), f
 
+
+def skew_correction(image, save=False, save_loc=None):
+    pass
 

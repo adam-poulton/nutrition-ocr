@@ -46,7 +46,7 @@ class TextProposalConnector:
 
         text_lines=clip_boxes(text_lines, im_size)
 
-        text_recs = np.zeros((len(text_lines), 9), np.float)
+        text_recs = np.zeros((len(text_lines), 9), float)
         index = 0
         for line in text_lines:
             xmin,ymin,xmax,ymax=line[0],line[1],line[2],line[3]

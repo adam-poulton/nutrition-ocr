@@ -5,6 +5,7 @@ import os
 import numpy as np
 import re
 import requests
+import logging
 
 from lib.fast_rcnn.test import get_blobs
 from lib.fast_rcnn.config import cfg, cfg_from_file
@@ -22,6 +23,7 @@ class Table:
     """
     represents a collection of data cell rows
     """
+
     def __init__(self):
         self.data = {}
 
@@ -30,6 +32,7 @@ class Row:
     """
     Represents a row of data cells
     """
+
     def __init__(self, label):
         self.label = label
         self.data = []
@@ -38,7 +41,7 @@ class Row:
         self.data.append(cell)
 
     def as_json(self):
-        return {self.label: {'value:' }}
+        return {self.label: {'value:'}}
 
 
 class Cell:
@@ -71,8 +74,8 @@ class Cell:
 
     @property
     def center(self):
-        x = (self.bbox[0] + self.bbox[2]) / 2
-        y = (self.bbox[1] + self.bbox[3]) / 2
+        x = (self.bbox[0] + self.bbox[2]) // 2
+        y = (self.bbox[1] + self.bbox[3]) // 2
         return x, y
 
     @property
@@ -112,21 +115,6 @@ class Cell:
         raise ValueError(f'Excepted type: {type(self)}. Given type: {type(other)}')
 
 
-# Separate the unit from its value. (eg. '24g' to '24' and 'g')
-def separate_unit(string):
-    string = string.replace(" ", "")
-    r1 = re.compile("(\d+[\.\,\']?\d*)([a-zA-Z]+)")
-    m1 = r1.match(string)
-    r2 = re.compile("(\d+[\.\,\']?\d*)")
-    m2 = r2.match(string)
-    if m1:
-        return float(m1.group(1).replace(',', '').replace("'", '')), m1.group(2).replace('q', 'g')
-    elif m2:
-        return float(m2.group(1).replace(',', '').replace("'", ''))
-    else:
-        return ""
-
-
 class DetectionPipeline:
     def __init__(self):
         # initialise the models
@@ -137,21 +125,24 @@ class DetectionPipeline:
         nutrient_path = os.path.join(basedir, 'data', 'nutrition-labels.txt')
         self.nutrient_path = nutrient_path
 
-    def detect(self, img_path):
+    def detect(self, img_path, debug=False):
         """
+        extracts the nutritional table from a given image by path
         :param img_path: path to an image
         :param debug: debug flag
-        :return: dictionary of nutritional OCR captures
+        :return: dictionary of extracted nutritional information i.e {'energy': {'value': 1670, 'unit': 'kJ'}...}
         """
-        
         image = cv.imread(img_path)
-        image = process_image.pre_process(image=image)
+        if debug:
+            cv.imwrite(os.path.join('data', 'result', '0-input.jpg'), image)
+        image = process_image.threshold(image=image)
         # Get the bounding boxes from the nutritional table model
         dims = self._detect_table_box(image)
 
         # crop the image to the given bounding box
         # cropped_image should now only contain nutritional table
-        cropped_image = process_image.crop(image=image, dims=dims, save=True, save_loc="cropped.jpg")
+        cropped_image = process_image.crop(image=image, dims=dims,
+                                           save=True, save_loc=os.path.join('data', 'result', '1-preprocessed.jpg'))
 
         # detect the text in the cropped image
         text_blob_list = self._detect_text(cropped_image)
@@ -165,22 +156,23 @@ class DetectionPipeline:
                 if text:
                     cells.append(Cell(bbox=blob_cord, text=text))
 
-        print(*sorted(cells, key=lambda x: (x.y1, x.x1)), sep="\n")
-
-        for cell in cells:
-            cropped_image = cv.rectangle(cropped_image, (cell.x1, cell.y1), (cell.x2, cell.y2), (0, 255, 0), 1)
-        cv.imwrite(os.path.join('images', 'table-boxes.jpg'), cropped_image)
-        # Map all boxes according to their location and append the value string to the label
+        if debug:
+            # print every identified cell on the table
+            print(*sorted(cells, key=lambda x: (x.y1, x.x1)), sep="\n")
+            for cell in cells:
+                # draw a green box around the cells
+                cropped_image = cv.rectangle(cropped_image, (cell.x1, cell.y1), (cell.x2, cell.y2), (0, 255, 0), 1)
+            cv.imwrite(os.path.join('data', 'result', '2-cells.jpg'), cropped_image)
 
         label_mapper = NutritionLabelMap()  # maps possible aliases of labels into their standard key
         output = {}  # store nutritional labels and values
+        mx, my = cropped_image.shape[1], cropped_image.shape[0]  # image max cords
 
         for cell in cells:
             if cell.text in label_mapper:
                 # cell is a label
                 cx, cy = cell.center
-                # get the JSON key for this label
-                label = label_mapper[cell.text]
+                label = label_mapper[cell.text]  # get the JSON key for this label
                 row = []
                 for target in cells:
                     t_min = target.y1
@@ -189,10 +181,30 @@ class DetectionPipeline:
                         # label is on same row as the target value
                         row.append(target)
                 if row:
-                    # get the cell on the far left (quantity per 100g)
-                    value_cell = sorted(row, key=lambda c: c.x2, reverse=True)[0]
-                    value, unit = separate_unit(value_cell.text)
+                    # get the cell on the far right (quantity per 100g)
+                    v = sorted(row, key=lambda c: c.x2, reverse=True)[0]
+                    value, unit = _extract_value_unit(v.text)
+                    if not unit:
+                        unit = label_mapper.default_unit(cell.text)
                     output.update({label: {'value': value, 'unit': unit}})
+
+                    if debug:
+                        cropped_image = cv.line(cropped_image, (cx, cy), (mx, cy), (255, 0, 0), 1)
+                        cropped_image = cv.rectangle(cropped_image,
+                                                     (max(v.x1 - 2, 0),
+                                                      max(v.y1 - 2, 0)),
+                                                     (min(v.x2 + 2, mx),
+                                                      min(v.y2 + 2, my)),
+                                                     (255, 0, 0), 2)
+
+                if debug:
+                    cropped_image = cv.rectangle(cropped_image,
+                                                 (max(cell.x1 - 2, 0),
+                                                  max(cell.y1 - 2, 0)),
+                                                 (min(cell.x2 + 2, mx),
+                                                  min(cell.y2 + 2, my)),
+                                                 (255, 0, 0), 2)
+                    cv.imwrite(os.path.join('data', 'result', '3-rows.jpg'), cropped_image)
 
         return output
 
@@ -263,12 +275,40 @@ def _in_bounds(target, t_min, t_max):
     return t_min < target < t_max
 
 
+def _extract_value_unit(string, debug=False):
+    """
+    returns value-unit pair in given string
+      i.e '24.3g' -> (24.3, 'g')
+    if there are multiple returns right-most
+      i.e '24.3mg 1,650kJ' -> (1650.0, 'kJ')
+    """
+    # matches value strings i.e '24.5g' or '1,670kJ'
+    pat = r'((?:\d+,{0,1}){0,}\d+\.{0,1}\d*)([0-9a-z%]{0,3})'
+    items = re.findall(pat, string)
+    if not items:
+        return [0, 'g']
+    value, unit = items[-1]  # get the right most value-unit pair
+    if unit == 'cal' and len(items) > 1:
+        value, unit = items[-2]  # handles cases like '1670kJ (500Cal)'
+    value = float(value.replace(',', '').replace("'", ''))
+    # clean up some common OCR errors
+    unit = unit.replace('c', 'g').replace('q', 'g').replace('a', 'g')
+    unit = re.sub(r'k$|kj$', 'kJ', unit)
+    unit = re.sub(r'j$', 'g', unit)
+    if debug:
+        print(f'  \'{string}\' -> {value} {unit}')
+    return value, unit
+
+
 def _clean_string(string: str):
+    text = string.lower().strip()
+    text = re.sub(r'\([^()]*\)', '', text)  # remove anything inside brackets
+    text = text.replace("nil detected", "0")
     bad_chars = r'[^a-zA-Z0-9 .,%\']'
-    text = re.sub(bad_chars, "", string)
+    text = re.sub(bad_chars, "", text)
     text = re.sub("Omg", "0mg", text)
     text = re.sub("Og", "0g", text)
-    text = re.sub('(?<=\d) (?=\w)', '', text)
+    text = re.sub(r'(?<=\d) (?=\w)', '', text)
     text = _fix_suffix(text)
     return text.strip()
 
@@ -281,12 +321,12 @@ def _fix_suffix(string: str):
     :param string: string to be checked and fixed
     :return: the fixed string
     """
-    line = re.search("\d\s|\d$", string)
+    line = re.search(r"\d\s|\d$", string)
     if line and line.group().strip() == "9":
         index = line.span()[0]
         string = string[:index] + "g" + string[index + 1:]
 
-    line = re.search("\dmq\s|\dmq$", string)
+    line = re.search(r"\dmq\s|\dmq$", string)
     if line:
         index = line.span()[0] + 2
         string = string[:index] + "g" + string[index + 1:]
@@ -301,10 +341,8 @@ def url_to_image(url: str):
 
 
 if __name__ == '__main__':
+    import json
     pipeline = DetectionPipeline()
-    pipeline.detect(os.path.join(os.getcwd(), 'images', f'label_{1}.jpg'))
-    # for i in range(1, 9):
-    #     img = os.path.join(os.getcwd(), 'images', f'label_{i}.jpg')
-    #     image = cv.imread(img)
-    #     dims = pipeline._detect_table_box(image)
-    #     cropped = process_image.crop(image=image, dims=dims, save=True, save_loc=os.path.join('data', 'result', f'cropped_{i}.jpg'))
+    result = pipeline.detect(os.path.join('images', f'label-{7}.jpg'), debug=True)
+    print(json.dumps(result, indent=2))
+

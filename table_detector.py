@@ -1,10 +1,11 @@
 import tensorflow.compat.v1 as tf
 import numpy as np
+import os
 
 
 class NutritionTableDetector:
     def __init__(self):
-        model_path = 'data/models/frozen_inference_graph.pb'
+        model_path = os.path.join(os.getcwd(), 'data', 'models', 'frozen_inference_graph.pb')
         self.detection_graph = tf.Graph()
         with self.detection_graph.as_default():
             od_graph_def = tf.GraphDef()

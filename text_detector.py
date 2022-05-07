@@ -1,13 +1,14 @@
 import tensorflow.compat.v1 as tf
-
+import os
 
 class NutritionTextDetector:
     def __init__(self):
+        model_path = os.path.join('data', 'models', 'ctpn.pb')
         self.detection_graph = tf.Graph()
         with self.detection_graph.as_default():
             config = tf.ConfigProto(allow_soft_placement=True)
             self.sess = tf.Session(config=config)
-            with tf.gfile.GFile('data/models/ctpn.pb', 'rb') as f:
+            with tf.gfile.GFile(model_path, 'rb') as f:
                 graph_def = tf.GraphDef()
                 graph_def.ParseFromString(f.read())
                 self.sess.graph.as_default()
