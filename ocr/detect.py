@@ -1,20 +1,16 @@
-import argparse
-import time
 import cv2 as cv
 import os
 import numpy as np
 import re
 import requests
-import logging
 
 from ocr import process_image
 from ocr.nutrition_map import NutritionLabelMap
 from ocr.table_detector import NutritionTableDetector
 from ocr.text_detector import NutritionTextDetector
-from .lib.fast_rcnn.test import get_blobs
-from .lib.fast_rcnn.config import cfg
-from .lib.rpn_msr.proposal_layer_tf import proposal_layer
-from .lib.text_connector.detectors import TextDetector
+from ocr.lib.fast_rcnn.test import get_blobs
+from ocr.lib.rpn_msr.proposal_layer_tf import proposal_layer
+from ocr.lib.text_connector.detectors import TextDetector
 
 
 class Cell:
@@ -23,8 +19,6 @@ class Cell:
             raise ValueError("class 'Cell' expected 4 elements in parameter: 'bbox'")
         self.bbox = bbox
         self.text = _clean_string(text.strip())
-        self.label = False
-        self.processed = False
 
     def __repr__(self):
         return f'cell: {self.bbox}\t "{self.text}"'
@@ -52,40 +46,8 @@ class Cell:
         return x, y
 
     @property
-    def text_type(self):
-        """
-        :return: An integer corresponding to string type:
-            0 - name and value
-            1 - value only
-            2 - name only
-        """
-        if any(char.isdigit() for char in self.text):
-            # the text contains a numerical digit
-            # text must contain a value
-            if re.search(r'\D{3,}\s', self.text):
-                # text contains at least 3 consecutive non-digits as well as digits
-                # assume text is a label and value combined i.e 'energy 250kJ'
-                return 0
-            else:
-                # text does not contain 3 consecutive non-digits
-                # assume text is a value with units i.e '120mg'
-                return 1
-        else:
-            # text contains no digits
-            # assume text is a pure label i.e 'energy'
-            return 2
-
-    def is_same_row(self, other):
-        if type(other) is type(self):
-            _, y = self.center
-            return other.y1 < y < other.y2
-        raise ValueError(f'Excepted type: {type(self)}. Given type: {type(other)}')
-
-    def is_same_col(self, other):
-        if type(other) is type(self):
-            x, _ = self.center
-            return other.x1 < x < other.x2
-        raise ValueError(f'Excepted type: {type(self)}. Given type: {type(other)}')
+    def contains_digit(self):
+        return any(char.isdigit() for char in self.text)
 
 
 class DetectionPipeline:
@@ -130,7 +92,7 @@ class DetectionPipeline:
                     cells.append(Cell(bbox=blob_cord, text=text))
 
         if debug:
-            # print every identified cell on the table
+            # print every identified cell
             print(*sorted(cells, key=lambda x: (x.y1, x.x1)), sep="\n")
             for cell in cells:
                 # draw a green box around the cells
@@ -150,13 +112,13 @@ class DetectionPipeline:
                 for target in cells:
                     t_min = target.y1
                     t_max = target.y2
-                    if _in_bounds(cy, t_min, t_max) and target.text_type != 2 and target.x1 > cell.x1:
+                    if _in_bounds(cy, t_min, t_max) and target.contains_digit and target.x1 > cell.x1:
                         # label is on same row as the target value
                         row.append(target)
                 if row:
                     # get the cell on the far right (quantity per 100g)
                     v = sorted(row, key=lambda c: c.x2, reverse=True)[0]
-                    value, unit = _extract_value_unit(v.text)
+                    value, unit = extract_value_unit(v.text)
                     if not unit:
                         unit = label_mapper.default_unit(cell.text)
                     output.update({label: {'value': value, 'unit': unit}})
@@ -168,7 +130,7 @@ class DetectionPipeline:
                                                       max(v.y1 - 2, 0)),
                                                      (min(v.x2 + 2, mx),
                                                       min(v.y2 + 2, my)),
-                                                     (255, 0, 0), 2)
+                                                     (0, 0, 255), 2)
 
                 if debug:
                     cropped_image = cv.rectangle(cropped_image,
@@ -253,7 +215,7 @@ def _in_bounds(target, t_min, t_max):
     return t_min < target < t_max
 
 
-def _extract_value_unit(string, debug=False):
+def extract_value_unit(string, debug=False):
     """
     returns value-unit pair in given string
       i.e '24.3g' -> (24.3, 'g')
@@ -320,9 +282,5 @@ def url_to_image(url: str):
     return cv.imdecode(image, -1)
 
 
-if __name__ == '__main__':
-    import json
-    pipeline = DetectionPipeline()
-    result = pipeline.run_by_path(os.path.join('images', f'label-{2}.jpg'), debug=True)
-    print(json.dumps(result, indent=2))
+
 

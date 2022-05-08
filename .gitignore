@@ -1,2 +1,2 @@
-data/result/3-rows.jpg
-__pycache__/*
+ocr/data/result/*
+**/__pycache__

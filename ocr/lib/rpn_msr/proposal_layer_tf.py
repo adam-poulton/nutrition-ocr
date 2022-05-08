@@ -1,4 +1,3 @@
-# -*- coding:utf-8 -*-
 import numpy as np
 from .generate_anchors import generate_anchors
 from ..fast_rcnn.config import cfg
@@ -45,17 +44,17 @@ def proposal_layer(rpn_cls_prob_reshape, rpn_bbox_pred, im_info, cfg_key='TEST',
     """
     cfg_key = cfg_key
     _anchors = generate_anchors()
-    _num_anchors = _anchors.shape[0]  # 9个anchor
+    _num_anchors = _anchors.shape[0]
 
-    im_info = im_info[0]  # 原始图像的高宽、缩放尺度
+    im_info = im_info[0]
 
     assert rpn_cls_prob_reshape.shape[0] == 1, \
         'Only single item batches are supported'
 
-    pre_nms_topN = cfg[cfg_key].RPN_PRE_NMS_TOP_N  # 12000,在做nms之前，最多保留的候选box数目
-    post_nms_topN = cfg[cfg_key].RPN_POST_NMS_TOP_N  # 2000，做完nms之后，最多保留的box的数目
-    nms_thresh = cfg[cfg_key].RPN_NMS_THRESH  # nms用参数，阈值是0.7
-    min_size = cfg[cfg_key].RPN_MIN_SIZE  # 候选box的最小尺寸，目前是16，高宽均要大于16
+    pre_nms_topN = cfg[cfg_key].RPN_PRE_NMS_TOP_N
+    post_nms_topN = cfg[cfg_key].RPN_POST_NMS_TOP_N
+    nms_thresh = cfg[cfg_key].RPN_NMS_THRESH
+    min_size = cfg[cfg_key].RPN_MIN_SIZE
 
     height, width = rpn_cls_prob_reshape.shape[1:3]  # feature-map
 
@@ -64,22 +63,15 @@ def proposal_layer(rpn_cls_prob_reshape, rpn_bbox_pred, im_info, cfg_key='TEST',
     # (1, H, W, A)
     scores = np.reshape(np.reshape(rpn_cls_prob_reshape, [1, height, width, _num_anchors, 2])[:, :, :, :, 1],
                         [1, height, width, _num_anchors])
-    # 提取到object的分数，non-object的我们不关心
-    # 并reshape到1*H*W*9
 
-    bbox_deltas = rpn_bbox_pred  # 模型输出的pred是相对值，需要进一步处理成真实图像中的坐标
-    # im_info = bottom[2].data[0, :]
+    bbox_deltas = rpn_bbox_pred
 
     if DEBUG:
         print('im_size: ({}, {})'.format(im_info[0], im_info[1]))
         print('scale: {}'.format(im_info[2]))
 
     # 1. Generate proposals from bbox deltas and shifted anchors
-    if DEBUG:
-        print('score map size: {}'.format(scores.shape))
-
     # Enumerate all shifts
-    # 同anchor-target-layer-tf这个文件一样，生成anchor的shift，进一步得到整张图像上的所有anchor
     shift_x = np.arange(0, width) * _feat_stride
     shift_y = np.arange(0, height) * _feat_stride
     shift_x, shift_y = np.meshgrid(shift_x, shift_y)
@@ -110,15 +102,15 @@ def proposal_layer(rpn_cls_prob_reshape, rpn_bbox_pred, im_info, cfg_key='TEST',
     scores = scores.reshape((-1, 1))
 
     # Convert anchors into proposals via bbox transformations
-    proposals = bbox_transform_inv(anchors, bbox_deltas)  # 做逆变换，得到box在图像上的真实坐标
+    proposals = bbox_transform_inv(anchors, bbox_deltas)
 
     # 2. clip predicted boxes to image
-    proposals = clip_boxes(proposals, im_info[:2])  # 将所有的proposal修建一下，超出图像范围的将会被修剪掉
+    proposals = clip_boxes(proposals, im_info[:2])
 
     # 3. remove predicted boxes with either height or width < threshold
     # (NOTE: convert min_size to input image scale stored in im_info[2])
-    keep = _filter_boxes(proposals, min_size * im_info[2])  # 移除那些proposal小于一定尺寸的proposal
-    proposals = proposals[keep, :]  # 保留剩下的proposal
+    keep = _filter_boxes(proposals, min_size * im_info[2])
+    proposals = proposals[keep, :]
     scores = scores[keep]
     bbox_deltas = bbox_deltas[keep, :]
 
@@ -129,8 +121,8 @@ def proposal_layer(rpn_cls_prob_reshape, rpn_bbox_pred, im_info, cfg_key='TEST',
 
     # 4. sort all (proposal, score) pairs by score from highest to lowest
     # 5. take top pre_nms_topN (e.g. 6000)
-    order = scores.ravel().argsort()[::-1]  # score按得分的高低进行排序
-    if pre_nms_topN > 0:  # 保留12000个proposal进去做nms
+    order = scores.ravel().argsort()[::-1]
+    if pre_nms_topN > 0:
         order = order[:pre_nms_topN]
     proposals = proposals[order, :]
     scores = scores[order]
@@ -139,7 +131,7 @@ def proposal_layer(rpn_cls_prob_reshape, rpn_bbox_pred, im_info, cfg_key='TEST',
     # 6. apply nms (e.g. threshold = 0.7)
     # 7. take after_nms_topN (e.g. 300)
     # 8. return the top proposals (-> RoIs top)
-    keep = nms(np.hstack((proposals, scores)), nms_thresh)  # 进行nms操作，保留2000个proposal
+    keep = nms(np.hstack((proposals, scores)), nms_thresh)
     if post_nms_topN > 0:
         keep = keep[:post_nms_topN]
     proposals = proposals[keep, :]

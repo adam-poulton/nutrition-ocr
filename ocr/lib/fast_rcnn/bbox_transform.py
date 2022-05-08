@@ -1,5 +1,6 @@
 import numpy as np
 
+
 def bbox_transform(ex_rois, gt_rois):
     """
     computes the distance from ground-truth boxes to the given boxes, normed by their size
@@ -21,8 +22,6 @@ def bbox_transform(ex_rois, gt_rois):
     gt_ctr_x = gt_rois[:, 0] + 0.5 * gt_widths
     gt_ctr_y = gt_rois[:, 1] + 0.5 * gt_heights
 
-    # warnings.catch_warnings()
-    # warnings.filterwarnings('error')
     targets_dx = (gt_ctr_x - ex_ctr_x) / ex_widths
     targets_dy = (gt_ctr_y - ex_ctr_y) / ex_heights
     targets_dw = np.log(gt_widths / ex_widths)
@@ -33,8 +32,8 @@ def bbox_transform(ex_rois, gt_rois):
 
     return targets
 
-def bbox_transform_inv(boxes, deltas):
 
+def bbox_transform_inv(boxes, deltas):
     boxes = boxes.astype(deltas.dtype, copy=False)
 
     widths = boxes[:, 2] - boxes[:, 0] + 1.0
@@ -64,11 +63,11 @@ def bbox_transform_inv(boxes, deltas):
 
     return pred_boxes
 
+
 def clip_boxes(boxes, im_shape):
     """
     Clip boxes to image boundaries.
     """
-
     # x1 >= 0
     boxes[:, 0::4] = np.maximum(np.minimum(boxes[:, 0::4], im_shape[1] - 1), 0)
     # y1 >= 0
