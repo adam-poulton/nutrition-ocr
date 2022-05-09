@@ -37,22 +37,3 @@ def get_blobs(im):
     return blobs, im_scale_factors
 
 
-def test_ctpn(sess, net, im, boxes=None):
-    blobs, im_scales = get_blobs(im, boxes)
-    if cfg.TEST.HAS_RPN:
-        im_blob = blobs['data']
-        blobs['im_info'] = np.array(
-            [[im_blob.shape[1], im_blob.shape[2], im_scales[0]]],
-            dtype=np.float32)
-    # forward pass
-    if cfg.TEST.HAS_RPN:
-        feed_dict = {net.data: blobs['data'], net.im_info: blobs['im_info'], net.keep_prob: 1.0}
-
-    rois = sess.run([net.get_output('rois')[0]], feed_dict=feed_dict)
-    rois = rois[0]
-
-    scores = rois[:, 0]
-    if cfg.TEST.HAS_RPN:
-        assert len(im_scales) == 1, "Only single-image batch implemented"
-        boxes = rois[:, 1:5] / im_scales[0]
-    return scores, boxes
