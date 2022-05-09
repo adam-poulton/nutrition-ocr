@@ -56,6 +56,7 @@ class NutritionDetectionPipeline:
         # initialise the models
         self.table_model = NutritionTableDetector()
         self.text_model = NutritionTextDetector()
+        self.text_detector = TextDetector()
         # specify directory for output when debug flag
         basedir = os.path.dirname(os.path.abspath(__file__))
         self.output_dir = os.path.join(basedir, 'data', 'result')
@@ -193,8 +194,7 @@ class NutritionDetectionPipeline:
 
         scores = rois[:, 0]
         boxes = rois[:, 1:5] / scales[0]
-        text_detector = TextDetector()
-        boxes = text_detector.detect(boxes, scores[:, np.newaxis], image.shape[:2])
+        boxes = self.text_detector.detect(boxes, scores[:, np.newaxis], image.shape[:2])
 
         blob_list = []
         for box in boxes:
