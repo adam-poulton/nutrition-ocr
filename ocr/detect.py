@@ -64,22 +64,30 @@ class NutritionDetectionPipeline:
     def from_path(self, img_path, debug=False):
         """
         reads the nutritional table from a given image path
-        :param img_path:
-        :param debug:
-        :return:
+        returns dict entry for each label - with value and unit from the right-most column (qty per 100g/mL)
+        :param img_path: path to input image
+        :param debug: set to True for writing debug files into self.output_dir
+        :return: dict of nutritional info i.e {'energy': {'value': 1,278.0, 'unit': 'kJ'}, ...}
         """
         image = cv.imread(img_path)
         return self.from_cv_img(image, debug)
 
     def from_url(self, img_url, debug=False):
+        """
+        reads the nutritional table from a given image URL
+        returns dict entry for each label - with value and unit from the right-most column (qty per 100g/mL)
+        :param img_url: url to the input image
+        :param debug: set to True for writing debug files into self.output_dir
+        :return: dict of nutritional info i.e {'energy': {'value': 1,278.0, 'unit': 'kJ'}, ...}
+        """
         image = url_to_image(img_url)
         return self.from_cv_img(image, debug)
 
     def from_cv_img(self, cv_image, debug=False):
         """
-        extracts the nutritional table from a given cv_image
-        :param cv_image: cv2 image
-        :param debug: if True will save
+        reads the nutritional table from a given image
+        :param cv_image: cv2 input image
+        :param debug: set to True for writing debug files into self.output_dir
         :return: dictionary of extracted nutritional information i.e {'energy': {'value': 1670, 'unit': 'kJ'}...}
         """
         checkpoints = []  # time checkpoints for performance analysis
@@ -87,7 +95,7 @@ class NutritionDetectionPipeline:
         if debug:
             cv.imwrite(os.path.join(self.output_dir, '0-input.jpg'), cv_image)
         image = process_image.threshold(image=cv_image)
-        checkpoints.append(['process: threshold', timeit.default_timer() - start])
+        checkpoints.append(['apply threshold', timeit.default_timer() - start])
         # Get the bounding boxes from the nutritional table model
         dims = self._detect_table_box(image)
         checkpoints.append(['detect table area', timeit.default_timer() - start])
