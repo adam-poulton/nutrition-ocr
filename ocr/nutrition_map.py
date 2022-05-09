@@ -81,7 +81,3 @@ def _clean(string):
     string = re.sub(r' ', "-", string)
     return string
 
-
-if __name__ == '__main__':
-    a = NutritionLabelMap()
-    print(_clean('Saturated  0.1g'))

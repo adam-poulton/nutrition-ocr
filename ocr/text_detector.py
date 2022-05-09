@@ -5,7 +5,7 @@ import os
 class NutritionTextDetector:
     def __init__(self):
         basedir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(basedir, 'data', 'models', 'ctpn.pb')
+        model_path = os.path.join(basedir, 'lib', 'models', 'ctpn.pb')
         self.detection_graph = tf.Graph()
         with self.detection_graph.as_default():
             config = tf.ConfigProto(allow_soft_placement=True)

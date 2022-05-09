@@ -6,7 +6,7 @@ import os
 class NutritionTableDetector:
     def __init__(self):
         basedir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(basedir, 'data', 'models', 'frozen_inference_graph.pb')
+        model_path = os.path.join(basedir, 'lib', 'models', 'frozen_inference_graph.pb')
         self.detection_graph = tf.Graph()
         with self.detection_graph.as_default():
             od_graph_def = tf.GraphDef()

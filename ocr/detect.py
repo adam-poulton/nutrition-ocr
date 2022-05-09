@@ -3,6 +3,7 @@ import os
 import numpy as np
 import re
 import requests
+import timeit
 
 from ocr import process_image
 from ocr.nutrition_map import NutritionLabelMap
@@ -21,7 +22,7 @@ class Cell:
         self.text = _clean_string(text.strip())
 
     def __repr__(self):
-        return f'cell: {self.bbox}\t "{self.text}"'
+        return f'{str(self.bbox):24}\t{self.text}'
 
     @property
     def x1(self):
@@ -50,7 +51,7 @@ class Cell:
         return any(char.isdigit() for char in self.text)
 
 
-class DetectionPipeline:
+class NutritionDetectionPipeline:
     def __init__(self):
         # initialise the models
         self.table_model = NutritionTableDetector()
@@ -59,28 +60,44 @@ class DetectionPipeline:
         basedir = os.path.dirname(os.path.abspath(__file__))
         self.output_dir = os.path.join(basedir, 'data', 'result')
 
-    def run(self, cv_image, debug=False):
+    def from_path(self, img_path, debug=False):
         """
-        extracts the nutritional table from a given image by path
-        :param cv_image: cv2 image format image
-        :param debug: debug flag
+        reads the nutritional table from a given image path
+        :param img_path:
+        :param debug:
+        :return:
+        """
+        image = cv.imread(img_path)
+        return self.from_cv_img(image, debug)
+
+    def from_url(self, img_url, debug=False):
+        image = url_to_image(img_url)
+        return self.from_cv_img(image, debug)
+
+    def from_cv_img(self, cv_image, debug=False):
+        """
+        extracts the nutritional table from a given cv_image
+        :param cv_image: cv2 image
+        :param debug: if True will save
         :return: dictionary of extracted nutritional information i.e {'energy': {'value': 1670, 'unit': 'kJ'}...}
         """
-
+        checkpoints = []  # time checkpoints for performance analysis
+        start = timeit.default_timer()
         if debug:
             cv.imwrite(os.path.join(self.output_dir, '0-input.jpg'), cv_image)
         image = process_image.threshold(image=cv_image)
+        checkpoints.append(['process: threshold', timeit.default_timer() - start])
         # Get the bounding boxes from the nutritional table model
         dims = self._detect_table_box(image)
-
+        checkpoints.append(['detect table area', timeit.default_timer() - start])
         # crop the image to the given bounding box
         # cropped_image should now only contain nutritional table
         cropped_image = process_image.crop(image=image, dims=dims,
                                            save=True, save_loc=os.path.join(self.output_dir, '1-preprocessed.jpg'))
-
+        checkpoints.append(['crop table', timeit.default_timer() - start])
         # detect the text in the cropped image
         text_blob_list = self._detect_text(cropped_image)
-
+        checkpoints.append(['detect text boxes', timeit.default_timer() - start])
         cells = []
 
         for blob_cord in text_blob_list:
@@ -91,9 +108,11 @@ class DetectionPipeline:
                 if text:
                     cells.append(Cell(bbox=blob_cord, text=text))
 
+        checkpoints.append(['crop and OCR cells', timeit.default_timer() - start])
+
         if debug:
-            # print every identified cell
-            print(*sorted(cells, key=lambda x: (x.y1, x.x1)), sep="\n")
+            with open(os.path.join(self.output_dir, '3-cell-output.txt'), 'w') as f:
+                f.write('\n'.join(map(str, sorted(cells, key=lambda x: (x.y1, x.x1)))))
             for cell in cells:
                 # draw a green box around the cells
                 cropped_image = cv.rectangle(cropped_image, (cell.x1, cell.y1), (cell.x2, cell.y2), (0, 255, 0), 1)
@@ -139,17 +158,14 @@ class DetectionPipeline:
                                                  (min(cell.x2 + 2, mx),
                                                   min(cell.y2 + 2, my)),
                                                  (255, 0, 0), 2)
-                    cv.imwrite(os.path.join(self.output_dir, '3-rows.jpg'), cropped_image)
-
+                    cv.imwrite(os.path.join(self.output_dir, '4-rows.jpg'), cropped_image)
+        checkpoints.append(['extract labels, values, units', timeit.default_timer() - start])
+        if debug:
+            with open(os.path.join(self.output_dir, '5-output.txt'), 'w') as f:
+                f.write(''.join([f'{k:18} {v["value"]:8} {v["unit"]:8}\n' for k, v in output.items()]))
+            with open(os.path.join(self.output_dir, '6-times.txt'), 'w') as f:
+                f.write(''.join([f'{section:50}{time:8}\n' for section, time in checkpoints]))
         return output
-
-    def run_by_path(self, img_path, debug=False):
-        image = cv.imread(img_path)
-        return self.run(image, debug)
-
-    def run_by_url(self, img_url, debug=False):
-        image = url_to_image(img_url)
-        return self.run(image, debug)
 
     def _detect_table_box(self, image):
         # Get the bounding boxes from the nutritional table model
