@@ -4,15 +4,12 @@ from ..fast_rcnn.config import cfg
 from ..fast_rcnn.bbox_transform import bbox_transform_inv, clip_boxes
 from ..fast_rcnn.nms_wrapper import nms
 
-DEBUG = False
-"""
-Outputs object detection proposals by applying estimated bounding-box
-transformations to a set of regular boxes (called "anchors").
-"""
-
 
 def proposal_layer(rpn_cls_prob_reshape, rpn_bbox_pred, im_info, cfg_key='TEST', _feat_stride=[16, ]):
     """
+    Outputs object detection proposals by applying estimated bounding-box
+    transformations to a set of regular boxes (called "anchors").
+    ----------
     Parameters
     ----------
     rpn_cls_prob_reshape: (1 , H , W , Ax2) outputs of RPN, prob of bg or fg
@@ -65,10 +62,6 @@ def proposal_layer(rpn_cls_prob_reshape, rpn_bbox_pred, im_info, cfg_key='TEST',
                         [1, height, width, _num_anchors])
 
     bbox_deltas = rpn_bbox_pred
-
-    if DEBUG:
-        print('im_size: ({}, {})'.format(im_info[0], im_info[1]))
-        print('scale: {}'.format(im_info[2]))
 
     # 1. Generate proposals from bbox deltas and shifted anchors
     # Enumerate all shifts
